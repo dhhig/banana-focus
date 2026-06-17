@@ -1,0 +1,33 @@
+# Build output
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Thumbnails
+._*
+
+# Files that might contain user-specific paths
+*.xcuserdata
+*.xcworkspace
+xcuserdata/
+
+# Xcode
+*.xcuserstate
+*.xcbkptlist
+*.xcscmblueprint
+DerivedData/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.swp
+*.swo
+*~
+/tmp/
