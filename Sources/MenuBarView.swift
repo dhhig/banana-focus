@@ -30,7 +30,7 @@ struct MenuBarView: View {
                             .fill(Color.green)
                             .frame(width: 6, height: 6)
                         Spacer()
-                        Text(sessionManager.elapsedSeconds.formattedTimer)
+                        Text(sessionManager.remainingSeconds.formattedTimer)
                             .font(.system(.body, design: .monospaced))
                             .fontWeight(.medium)
                     }

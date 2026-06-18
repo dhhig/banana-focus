@@ -10,7 +10,7 @@ struct FocusGuardApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(sessionManager)
-                .frame(minWidth: 680, idealWidth: 720, minHeight: 560, idealHeight: 620)
+                .frame(minWidth: 720, idealWidth: 760, minHeight: 680, idealHeight: 720)
                 .onAppear {
                     if let window = NSApplication.shared.windows.first {
                         window.center()
@@ -27,10 +27,38 @@ struct FocusGuardApp: App {
             CommandGroup(replacing: .newItem) {}
         }
 
-        // Menu bar extra — shows timer during focus
-        MenuBarExtra("FocusGuard", systemImage: "timer") {
+        // Menu bar extra — shows countdown during focus
+        MenuBarExtra {
             MenuBarView()
                 .environmentObject(sessionManager)
+        } label: {
+            let phase = sessionManager.sessionPhase
+            let remain = sessionManager.remainingSeconds
+            if phase == .focusing || phase == .grace {
+                Text("🍌 \(remain.formattedTimer)")
+            } else {
+                Text("🍌")
+            }
+        }
+    }
+}
+
+// MARK: - App Delegate
+
+// MARK: - Menu Bar Label (live countdown)
+
+struct MenuBarLabel: View {
+    @EnvironmentObject var sessionManager: SessionManager
+
+    var body: some View {
+        if sessionManager.sessionPhase == .focusing || sessionManager.sessionPhase == .grace {
+            HStack(spacing: 3) {
+                Text("🍌")
+                Text(sessionManager.remainingSeconds.formattedTimer)
+                    .font(.system(size: 11, design: .monospaced).monospacedDigit())
+            }
+        } else {
+            Text("🍌")
         }
     }
 }

@@ -93,9 +93,10 @@ struct AppSettings: Codable {
     var pomodoroBreakMinutes: Int = 5
     var dailyGoalMinutes: Int = 120
     var overlayOpacity: Double = 0.65
-    var overlayEnabled: Bool = true
+    var overlayEnabled: Bool = false
     var autoLaunchApps: Bool = false
     var pauseOnLock: Bool = true
+    var sessionDurationMinutes: Int = 40   // 本次学习时长（倒计时）
 
     static let `default` = AppSettings()
 }

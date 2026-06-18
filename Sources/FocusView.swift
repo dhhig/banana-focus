@@ -24,96 +24,106 @@ struct FocusView: View {
     // MARK: - Idle View (no active session)
 
     private var idleView: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // Large banana logo
-            ZStack {
-                Circle()
-                    .fill(Color.yellow.opacity(0.15))
-                    .frame(width: 100, height: 100)
-
-                Text("🍌")
-                    .font(.system(size: 44))
-            }
-
-            VStack(spacing: 8) {
-                Text("🍌 准备剥香蕉")
-                    .font(.title3.bold())
-
-                if sessionManager.consecutiveDaysMet > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "flame.fill")
-                            .foregroundColor(.orange)
-                        Text("连续 \(sessionManager.consecutiveDaysMet) 天剥完香蕉")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+        ScrollView {
+            VStack(spacing: 20) {
+                // Hero banana
+                VStack(spacing: 4) {
+                    Text("🍌")
+                        .font(.system(size: 56))
+                    Text("剥香蕉")
+                        .font(.largeTitle.bold())
+                    Text("专注学习，每天剥完一根香蕉")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    if sessionManager.consecutiveDaysMet > 1 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "flame.fill").foregroundColor(.orange).font(.caption)
+                            Text("连续 \(sessionManager.consecutiveDaysMet) 天达成目标")
+                                .font(.caption).foregroundColor(.orange)
+                        }
+                        .padding(.top, 2)
                     }
                 }
-            }
+                .padding(.top, 20)
 
-            // Stats summary
-            HStack(spacing: 32) {
-                StatBadge(
-                    label: "今日",
-                    value: sessionManager.todayTotalSeconds.formattedShort,
-                    icon: "sun.max.fill",
-                    color: .yellow
-                )
-                StatBadge(
-                    label: "本周",
-                    value: sessionManager.weekTotalSeconds.formattedShort,
-                    icon: "calendar",
-                    color: .blue
-                )
-                StatBadge(
-                    label: "总计",
-                    value: sessionManager.allTimeTotalSeconds.formattedShort,
-                    icon: "clock.fill",
-                    color: .purple
-                )
-            }
-
-            // Daily goal
-            VStack(spacing: 6) {
-                HStack {
-                    Text("今日目标")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(sessionManager.todayTotalSeconds.formattedShort) / \(sessionManager.settings.dailyGoalMinutes)分")
-                        .font(.caption.bold())
+                // Stats cards
+                HStack(spacing: 12) {
+                    StatBadge(label:"今日", value: sessionManager.todayTotalSeconds.formattedShort,
+                             icon: "sun.max.fill", color: .orange)
+                    StatBadge(label:"本周", value: sessionManager.weekTotalSeconds.formattedShort,
+                             icon: "calendar", color: .blue)
+                    StatBadge(label:"总计", value: sessionManager.allTimeTotalSeconds.formattedShort,
+                             icon: "clock.fill", color: .purple)
                 }
-                ProgressView(value: sessionManager.todayGoalProgress)
-                    .tint(sessionManager.todayGoalProgress >= 1.0 ? Color.green : Color.accentColor)
-            }
-            .frame(width: 240)
+                .padding(.horizontal, 20)
 
-            // Help text
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.left")
-                    .font(.caption)
-                Text("前往「选择」标签页选择学习应用并开始")
-                    .font(.caption)
-            }
-            .foregroundColor(.secondary)
-            .padding(.top, 8)
-
-            // Settings gear
-            Button {
-                showingSettings = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "gearshape")
-                    Text("设置")
+                // Daily goal card
+                VStack(spacing: 8) {
+                    HStack {
+                        Label("今日目标", systemImage: "target").font(.subheadline.bold())
+                        Spacer()
+                        Text("\(sessionManager.todayTotalSeconds.formattedShort) / \(sessionManager.settings.dailyGoalMinutes)分")
+                            .font(.subheadline.monospacedDigit())
+                    }
+                    ProgressView(value: sessionManager.todayGoalProgress)
+                        .tint(sessionManager.todayGoalProgress >= 1.0 ? Color.green : Color.accentColor)
+                        .scaleEffect(x: 1, y: 1.8, anchor: .center)
                 }
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color.accentColor.opacity(0.06)))
+                .padding(.horizontal, 20)
+
+            // Action buttons
+            VStack(spacing: 12) {
+                if sessionManager.canQuickStart {
+                    Button { sessionManager.quickStart() } label: {
+                        Label("快速开始（上次应用）", systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(Color.accentColor))
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button { sessionManager.startFreeSession() } label: {
+                    Label("自由专注（不限App）", systemImage: "timer")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.accentColor.opacity(0.1)))
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+
+                // Duration
+                VStack(spacing: 6) {
+                    Text("学习时长").font(.subheadline.bold())
+                    Slider(value: Binding(
+                        get: { Double(sessionManager.settings.sessionDurationMinutes) },
+                        set: { v in sessionManager.settings.sessionDurationMinutes = max(5, Int(v)); sessionManager.saveSettings() }
+                    ), in: 5...240, step: 5)
+                    Text("\(sessionManager.settings.sessionDurationMinutes / 60) 小时 \(sessionManager.settings.sessionDurationMinutes % 60) 分钟")
+                        .font(.title3.bold().monospacedDigit())
+                        .foregroundColor(.accentColor)
+                }
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color.accentColor.opacity(0.04)))
+            }
+            .padding(.horizontal, 20)
+
+            // Settings
+            Button { showingSettings = true } label: {
+                Label("设置", systemImage: "gearshape")
+                    .font(.caption).foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-
-            Spacer()
+            .padding(.bottom, 20)
+            }
         }
+        .scrollIndicators(.hidden)
     }
 
     // MARK: - Paused View (screen locked)
@@ -146,30 +156,52 @@ struct FocusView: View {
 
     private var activeFocusView: some View {
         VStack(spacing: 0) {
-            // Grace warning banner
+            // Grace warning banner with smooth animation
             if sessionManager.showGraceWarning && sessionManager.sessionPhase == .grace {
                 graceBanner
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             Spacer()
 
-            // Timer
+            // Countdown Timer
             VStack(spacing: 8) {
-                Text(sessionManager.elapsedSeconds.formattedTimer)
+                // Large countdown
+                Text(sessionManager.remainingSeconds.formattedTimer)
                     .font(.system(size: 56, weight: .light, design: .monospaced))
                     .foregroundColor(
-                        sessionManager.sessionPhase == .grace ? .orange : .primary
+                        sessionManager.remainingSeconds < 60 ? .red
+                            : sessionManager.sessionPhase == .grace ? .orange
+                            : .primary
                     )
+
+                // Progress bar for countdown
+                let totalDur = sessionManager.settings.sessionDurationMinutes * 60
+                let progress = totalDur > 0
+                    ? Double(sessionManager.remainingSeconds) / Double(totalDur)
+                    : 0
+                ProgressView(value: progress)
+                    .tint(
+                        sessionManager.remainingSeconds < 60 ? Color.red
+                            : sessionManager.remainingSeconds < 300 ? Color.orange
+                            : Color.accentColor
+                    )
+                    .frame(width: 200)
+
+                // Elapsed + total
+                HStack(spacing: 6) {
+                    Text("已学 \(sessionManager.elapsedSeconds.formattedShort)")
+                        .font(.caption).foregroundColor(.secondary)
+                    Text("·").foregroundColor(.secondary)
+                    Text("目标 \(sessionManager.settings.sessionDurationMinutes)分")
+                        .font(.caption).foregroundColor(.secondary)
+                }
 
                 if let tag = sessionManager.currentSubjectTag.nilIfEmpty {
                     Text(tag)
                         .font(.caption)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(Color.accentColor.opacity(0.15))
-                        )
+                        .padding(.horizontal, 10).padding(.vertical, 3)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                 }
             }
 
@@ -217,68 +249,80 @@ struct FocusView: View {
 
             Spacer()
 
-            // End session button
+            // End session button (always visible during focus)
             Button {
                 sessionManager.endSession()
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "stop.fill")
-                    Text("结束学习")
-                }
-                .padding(.horizontal, 30)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(Color.red.opacity(0.8))
-                )
-                .foregroundColor(.white)
+                Text("提前结束")
+                    .font(.caption)
+                    .padding(.horizontal, 20).padding(.vertical, 6)
+                    .background(Capsule().fill(Color.red.opacity(0.15)))
+                    .foregroundColor(.red)
             }
             .buttonStyle(.plain)
-            .padding(.bottom, 12)
-
-            Text("切换至非学习应用将导致计时作废")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 20)
+            .padding(.bottom, 20)
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: sessionManager.showGraceWarning)
     }
 
     // MARK: - Grace Banner
 
     private var graceBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundColor(.orange)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("检测到切换应用！")
-                    .font(.subheadline.bold())
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
                     .foregroundColor(.orange)
-                Text("请在 \(sessionManager.graceRemaining) 秒内切回学习应用，否则学习作废")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("⚠️ 检测到切屏！")
+                        .font(.subheadline.bold())
+                        .foregroundColor(.orange)
+                    Text("请在 \(sessionManager.graceRemaining) 秒内切回学习应用")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // Big countdown
+                Text("\(sessionManager.graceRemaining)")
+                    .font(.system(size: 32, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.orange)
+                    .frame(width: 50, height: 50)
+                    .background(Circle().stroke(Color.orange, lineWidth: 3))
             }
 
-            Spacer()
+            // Action buttons
+            HStack(spacing: 12) {
+                Button {
+                    sessionManager.failSession(reason: "用户主动放弃")
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark")
+                        Text("放弃学习")
+                    }
+                    .font(.caption.bold())
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .background(Capsule().fill(Color.red.opacity(0.15)))
+                    .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
 
-            // Countdown
-            Text("\(sessionManager.graceRemaining)")
-                .font(.system(size: 28, weight: .bold, design: .monospaced))
-                .foregroundColor(.orange)
-                .frame(width: 44, height: 44)
-                .background(
-                    Circle()
-                        .stroke(Color.orange, lineWidth: 2)
-                )
+                Spacer()
+
+                Text("切换回学习 App 则自动继续")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
-        .padding(14)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.orange.opacity(0.1))
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.orange.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
                 )
         )
         .padding(.horizontal, 20)
@@ -307,7 +351,6 @@ struct FocusView: View {
                 .fill(Color.secondary.opacity(0.1))
         )
     }
-}
 
 // MARK: - Stat Badge
 
@@ -438,34 +481,6 @@ struct SettingsView: View {
                         }
                     }
 
-                    // Overlay
-                    SettingsSection(title: "屏幕暗化", icon: "rectangle.fill.on.rectangle.fill") {
-                        VStack(spacing: 8) {
-                            Toggle("启用暗化蒙层", isOn: Binding(
-                                get: { sessionManager.settings.overlayEnabled },
-                                set: { v in
-                                    sessionManager.settings.overlayEnabled = v
-                                    sessionManager.saveSettings()
-                                }
-                            ))
-                            if sessionManager.settings.overlayEnabled {
-                                HStack {
-                                    Text("蒙层透明度")
-                                    Spacer()
-                                    Slider(value: Binding(
-                                        get: { sessionManager.settings.overlayOpacity },
-                                        set: { v in
-                                            sessionManager.settings.overlayOpacity = v
-                                            sessionManager.saveSettings()
-                                        }
-                                    ), in: 0.3...0.9, step: 0.05)
-                                    Text("\(Int(sessionManager.settings.overlayOpacity * 100))%")
-                                        .frame(width: 36, alignment: .trailing)
-                                }
-                            }
-                        }
-                    }
-
                     // Other
                     SettingsSection(title: "其他", icon: "ellipsis.gearshape") {
                         VStack(spacing: 8) {
@@ -511,4 +526,4 @@ struct SettingsSection<Content: View>: View {
         }
     }
 }
-
+}

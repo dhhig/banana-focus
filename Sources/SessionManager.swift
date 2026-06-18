@@ -21,6 +21,9 @@ class SessionManager: ObservableObject {
     @Published var pomodoro: PomodoroState = PomodoroState()
     @Published var currentSubjectTag: String = ""
     @Published var showGraceWarning: Bool = false
+    @Published var remainingSeconds: Int = 0
+    @Published var lastUsedBundleIDs: [String] = []
+    private var isAlertShowing = false
 
     // MARK: - Services
 
@@ -30,8 +33,8 @@ class SessionManager: ObservableObject {
     // MARK: - Timers
 
     private var mainTimer: AnyCancellable?
-    private var graceTimer: AnyCancellable?
     private var overlayUpdateTimer: AnyCancellable?
+    private var pollTimer: AnyCancellable?  // polls frontmost app every 0.5s
     private var appObserver: NSObjectProtocol?
     private var screenSleepObserver: NSObjectProtocol?
     private var screenWakeObserver: NSObjectProtocol?
@@ -57,6 +60,34 @@ class SessionManager: ObservableObject {
         loadDailyStats()
         calculateStreak()
         setupAppObserver()
+        loadDiscoverableApps()
+    }
+
+    @Published var discoverableApps: [StudyApp] = []
+
+    func loadDiscoverableApps() {
+        guard discoverableApps.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let apps = self.appDiscovery.discoverApps()
+            DispatchQueue.main.async {
+                self.discoverableApps = apps
+            }
+        }
+    }
+
+    func toggleAppSelection(_ app: StudyApp) {
+        guard let idx = discoverableApps.firstIndex(where: { $0.id == app.id }) else { return }
+        var updated = discoverableApps
+        updated[idx].isSelected.toggle()
+        discoverableApps = updated
+    }
+
+    var selectedAppCount: Int {
+        discoverableApps.filter { $0.isSelected }.count
+    }
+
+    var filteredDiscoverableApps: [StudyApp] {
+        discoverableApps
     }
 
     // MARK: - App Monitoring
@@ -91,6 +122,28 @@ class SessionManager: ObservableObject {
             }
     }
 
+    /// Verify the frontmost app is in the whitelist. Called right after session start.
+    private func checkFrontmostApp() {
+        guard sessionPhase == .focusing else { return }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let bundleID = frontApp.bundleIdentifier else { return }
+        currentFrontAppBundleID = bundleID
+        currentFrontAppName = frontApp.localizedName ?? bundleID
+
+        let ourBundleID = Bundle.main.bundleIdentifier ?? "com.focusguard.app"
+        let systemIgnore = [
+            "com.apple.loginwindow","com.apple.notificationcenterui","com.apple.controlcenter",
+            "com.apple.Spotlight","com.apple.dock","com.apple.systemuiserver",
+            "com.apple.WindowManager","com.apple.AccessibilityUIServer",
+        ]
+        if bundleID == ourBundleID || systemIgnore.contains(bundleID) { return }
+        guard !whitelistedBundleIDs.isEmpty else { return }
+
+        if !whitelistedBundleIDs.contains(bundleID) {
+            enterGrace()  // show popup alert
+        }
+    }
+
     private func handleAppActivation(_ notification: Notification) {
         guard sessionPhase == .focusing || sessionPhase == .grace else { return }
 
@@ -117,19 +170,14 @@ class SessionManager: ObservableObject {
         ]
         if systemIgnore.contains(bundleID) { return }
 
-        if whitelistedBundleIDs.contains(bundleID) {
-            // Switched to a whitelisted app
-            if sessionPhase == .grace {
-                cancelGrace()
-            }
-        } else {
-            // Switched to a non-whitelisted app → trigger grace or fail immediately
-            if settings.gracePeriodSeconds > 0 && sessionPhase == .focusing {
-                enterGrace()
-            } else {
-                failSession(reason: "切换到非学习应用: \(currentFrontAppName)")
-            }
+        // Free mode: no app restrictions
+        if whitelistedBundleIDs.isEmpty { return }
+
+        if !whitelistedBundleIDs.contains(bundleID) && sessionPhase == .focusing {
+            // Switched to a non-study app → show alert popup
+            enterGrace()
         }
+        // If switched to a study app, just update current app info (no action needed)
     }
 
     private func handleScreenSleep() {
@@ -153,42 +201,53 @@ class SessionManager: ObservableObject {
     // MARK: - Grace Period
 
     private func enterGrace() {
-        sessionPhase = .grace
-        graceRemaining = settings.gracePeriodSeconds
-        showGraceWarning = true
+        guard !isAlertShowing else { return }
+        isAlertShowing = true
 
-        graceTimer = Timer.publish(every: 1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.tickGrace()
-            }
-    }
-
-    private func tickGrace() {
-        graceRemaining -= 1
-        if graceRemaining <= 0 {
-            graceTimer?.cancel()
-            showGraceWarning = false
-            failSession(reason: "宽限期结束 - 切换到非学习应用: \(currentFrontAppName)")
+        // Remember which study app was last active (to switch back on continue)
+        let lastStudyApp = whitelistedBundleIDs.first
+        let lastStudyAppPath: String? = lastStudyApp.flatMap { bid in
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid)?.path
         }
+
+        AlertWindowController.shared.show(
+            onContinue: { [weak self] in
+                self?.isAlertShowing = false
+                self?.sessionPhase = .focusing
+                // Switch back to the study app
+                if let path = lastStudyAppPath {
+                    NSWorkspace.shared.openApplication(
+                        at: URL(fileURLWithPath: path),
+                        configuration: NSWorkspace.OpenConfiguration()
+                    ) { _, _ in }
+                }
+            },
+            onQuit: { [weak self] in
+                self?.isAlertShowing = false
+                // Hide our window, don't pop it up
+                for window in NSApp.windows {
+                    window.orderOut(nil)
+                }
+                self?.failSession(reason: "用户主动放弃学习")
+            }
+        )
     }
 
-    private func cancelGrace() {
-        graceTimer?.cancel()
-        graceRemaining = 0
-        showGraceWarning = false
-        sessionPhase = .focusing
-    }
 
     // MARK: - Session Control
 
-    func startSession(apps: [StudyApp]) {
+    func startSession(apps: [StudyApp], durationMinutes: Int? = nil) {
         selectedApps = apps
         whitelistedBundleIDs = Set(apps.map { $0.id })
+        lastUsedBundleIDs = apps.map { $0.id }
         // Always allow our own app
         if let ourID = Bundle.main.bundleIdentifier {
             whitelistedBundleIDs.insert(ourID)
         }
+
+        let dur = durationMinutes ?? settings.sessionDurationMinutes
+        remainingSeconds = dur * 60
+        settings.sessionDurationMinutes = dur
 
         sessionStartTime = Date()
         elapsedSeconds = 0
@@ -207,33 +266,116 @@ class SessionManager: ObservableObject {
             )
         }
 
-        // Launch apps if enabled
-        if settings.autoLaunchApps {
-            for app in apps {
-                NSWorkspace.shared.openApplication(
-                    at: URL(fileURLWithPath: app.path),
-                    configuration: NSWorkspace.OpenConfiguration()
-                ) { _, _ in }
+        // Always launch selected apps
+        for app in apps {
+            NSWorkspace.shared.openApplication(
+                at: URL(fileURLWithPath: app.path),
+                configuration: NSWorkspace.OpenConfiguration()
+            ) { _, _ in }
+        }
+
+        // Smooth fade-out of main window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            for window in NSApp.windows where window.title.contains("剥香蕉") {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.3
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    window.animator().alphaValue = 0.0
+                } completionHandler: {
+                    window.orderOut(nil)
+                    window.alphaValue = 1.0  // reset for next time
+                }
             }
         }
 
-        // Show overlay
-        if settings.overlayEnabled {
-            overlayService.show(whitelistedBundleIDs: whitelistedBundleIDs)
-            startOverlayUpdates()
-        }
+        // Overlay disabled by default
 
         // Start timer
         startMainTimer()
 
-        // Get current frontmost app name
+        // Poll frontmost app every 0.5s for instant detection
+        startPolling()
+
+        // Verify immediately after launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.checkFrontmostApp()
+        }
+    }
+
+    /// Quick-start: begin focus with last-used apps
+    func quickStart() {
+        guard !lastUsedBundleIDs.isEmpty else { return }
+        let apps = discoverableApps.filter { lastUsedBundleIDs.contains($0.id) }
+        if apps.isEmpty {
+            startFreeSession()
+        } else {
+            startSession(apps: apps)
+        }
+    }
+
+    /// Free-style focus: no app whitelist, just timer + overlay off
+    func startFreeSession() {
+        selectedApps = []
+        whitelistedBundleIDs = []
+        remainingSeconds = settings.sessionDurationMinutes * 60
+        sessionStartTime = Date()
+        elapsedSeconds = 0
+        sessionPhase = .focusing
+        graceRemaining = 0
+        showGraceWarning = false
+        isPausedForLock = false
+        pomodoro = PomodoroState()
+        startMainTimer()
+        startPolling()
+        // Hide window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            for window in NSApp.windows where window.title.contains("剥香蕉") {
+                window.orderOut(nil)
+            }
+        }
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             currentFrontAppName = frontApp.localizedName ?? ""
             currentFrontAppBundleID = frontApp.bundleIdentifier ?? ""
         }
     }
 
+    /// Restore main window with smooth animation
+    func restoreMainWindow() {
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.regular)
+            for window in NSApp.windows {
+                if window.title.contains("剥香蕉") || !window.isVisible {
+                    // Fade in smoothly
+                    window.alphaValue = 0
+                    window.makeKeyAndOrderFront(nil)
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.35
+                        ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                        window.animator().alphaValue = 1.0
+                    }
+                    break
+                }
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func showFailAlert(reason: String) {
+        NSSound.beep()
+    }
+
+    private func showEndAlert() {
+        NSSound.beep()
+        NSSound.beep()  // Double beep for success
+    }
+
+    var canQuickStart: Bool {
+        !lastUsedBundleIDs.isEmpty
+    }
+
     func endSession() {
+        showEndAlert()
+        restoreMainWindow()
         let duration = elapsedSeconds
         let session = StudySession(
             id: UUID(),
@@ -257,6 +399,8 @@ class SessionManager: ObservableObject {
     }
 
     func failSession(reason: String) {
+        showFailAlert(reason: reason)
+        // Don't restore window — user chose to quit, app stays in background
         let duration = elapsedSeconds
         print("[FocusGuard] Session failed: \(reason)")
 
@@ -283,17 +427,18 @@ class SessionManager: ObservableObject {
 
     private func resetSession() {
         mainTimer?.cancel()
-        graceTimer?.cancel()
         overlayUpdateTimer?.cancel()
         overlayService.hide()
         sessionPhase = .idle
         elapsedSeconds = 0
+        remainingSeconds = 0
         graceRemaining = 0
         showGraceWarning = false
         isPausedForLock = false
         whitelistedBundleIDs = []
         selectedApps = []
         pomodoro = PomodoroState()
+        stopPolling()
     }
 
     // MARK: - Timer
@@ -309,6 +454,13 @@ class SessionManager: ObservableObject {
     private func tickMainTimer() {
         guard sessionPhase == .focusing else { return }
         elapsedSeconds += 1
+        remainingSeconds = max(0, remainingSeconds - 1)
+
+        // Auto-complete when countdown reaches 0
+        if remainingSeconds <= 0 {
+            endSession()
+            return
+        }
 
         // Pomodoro countdown
         if settings.pomodoroEnabled && pomodoro.isActive {
@@ -343,6 +495,45 @@ class SessionManager: ObservableObject {
     private func showFocusNotification() {
         // Play system beep for pomodoro focus alert
         NSSound.beep()
+    }
+
+    // MARK: - Polling (instant app switch detection)
+
+    private func startPolling() {
+        pollTimer = Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.pollFrontmostApp()
+            }
+    }
+
+    private func stopPolling() {
+        pollTimer?.cancel()
+        pollTimer = nil
+    }
+
+    private func pollFrontmostApp() {
+        guard sessionPhase == .focusing else { return }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let bundleID = frontApp.bundleIdentifier else { return }
+
+        let ourBundleID = Bundle.main.bundleIdentifier ?? "com.focusguard.app"
+        if bundleID == ourBundleID { return }
+
+        let systemIgnore = [
+            "com.apple.loginwindow","com.apple.notificationcenterui","com.apple.controlcenter",
+            "com.apple.Spotlight","com.apple.dock","com.apple.systemuiserver",
+            "com.apple.WindowManager","com.apple.AccessibilityUIServer",
+        ]
+        if systemIgnore.contains(bundleID) { return }
+        if whitelistedBundleIDs.isEmpty { return }  // free mode
+
+        if !whitelistedBundleIDs.contains(bundleID) && sessionPhase == .focusing {
+            // Detected switch to non-study app → show alert popup
+            currentFrontAppBundleID = bundleID
+            currentFrontAppName = frontApp.localizedName ?? bundleID
+            enterGrace()
+        }
     }
 
     // MARK: - Overlay Updates
